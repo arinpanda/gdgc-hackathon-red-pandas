@@ -7,6 +7,12 @@ export interface Vouch {
   vouchedForId: string;
   /** Base64 raw P-256 public key of the voucher, copied for offline verification. */
   voucherPublicKey: string;
+  /**
+   * Snapshot of the voucher's own trustLevel at the moment of vouching.
+   * Signed (so the voucher is attesting to it). The vouchee's trust delta is
+   * derived from this value at vouch time only — never recomputed.
+   */
+  voucherTrustAtTime: number;
   /** ISO 8601 UTC timestamp. */
   createdAt: string;
   /** Base64 IEEE-P1363 ECDSA signature over canonicalize(unsignedFields). */
@@ -19,6 +25,7 @@ export interface UnsignedVouch {
   voucherId: string;
   vouchedForId: string;
   voucherPublicKey: string;
+  voucherTrustAtTime: number;
   createdAt: string;
 }
 
@@ -26,9 +33,13 @@ export interface UnsignedVouch {
  * Produce the byte payload that gets signed. Keys are sorted lexicographically,
  * no whitespace, UTF-8. Mobile MUST produce byte-identical output for any
  * vouch with the same field values.
+ *
+ * Numeric fields (voucherTrustAtTime) are serialized via JSON.stringify's
+ * default number formatting. Mobile must use a JSON encoder that produces the
+ * same canonical numeric form (e.g. `2` not `2.0`, `2.5` not `2.50`).
  */
 export function canonicalVouchBytes(unsigned: UnsignedVouch): Uint8Array<ArrayBuffer> {
-  const ordered: Record<string, string> = {};
+  const ordered: Record<string, string | number> = {};
   for (const key of Object.keys(unsigned).sort()) {
     ordered[key] = unsigned[key as keyof UnsignedVouch];
   }

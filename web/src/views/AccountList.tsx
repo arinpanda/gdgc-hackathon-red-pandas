@@ -4,7 +4,6 @@ interface Props {
   accounts: Account[];
   selectedUserId: string | null;
   activeUserId: string | null;
-  trustLevels: Map<string, number>;
   onSelect: (userId: string) => void;
   onSetActive: (userId: string) => void;
   onNew: () => void;
@@ -14,7 +13,6 @@ export function AccountList({
   accounts,
   selectedUserId,
   activeUserId,
-  trustLevels,
   onSelect,
   onSetActive,
   onNew,
@@ -27,7 +25,7 @@ export function AccountList({
       </div>
       <ul className="account-list">
         {accounts.map((a) => {
-          const trust = trustLevels.get(a.userId) ?? 0;
+          const trust = a.trustLevel;
           const isActive = a.userId === activeUserId;
           const isSelected = a.userId === selectedUserId;
           return (

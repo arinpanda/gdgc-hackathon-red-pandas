@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Account } from "./shared/types/account";
 import type { Vouch } from "./shared/types/vouch";
-import { computeTrust } from "./shared/trust/computeTrust";
 import {
   listAccounts,
   getActiveUserId,
@@ -34,15 +33,9 @@ export default function App() {
     return m;
   }, [accounts]);
 
-  const trustLevels = useMemo(
-    () => computeTrust(accounts.map((a) => a.userId), vouches),
-    [accounts, vouches],
-  );
-
   const activeAccount = activeUserId ? accountsById.get(activeUserId) ?? null : null;
   const selectedAccount = selectedUserId ? accountsById.get(selectedUserId) ?? null : null;
 
-  // If the active account no longer exists, pick another.
   useEffect(() => {
     if (activeUserId && !accountsById.has(activeUserId)) {
       const next = accounts[0]?.userId ?? null;
@@ -51,17 +44,12 @@ export default function App() {
     }
   }, [accounts, accountsById, activeUserId]);
 
-  function refresh() {
-    setAccounts(listAccounts());
-    setVouches(listVouches());
-    setActive(getActiveUserId());
-  }
-
   function handleCreated(account: Account) {
     if (!activeUserId) {
       setActiveUserId(account.userId);
+      setActive(account.userId);
     }
-    refresh();
+    setAccounts(listAccounts());
     setSelected(account.userId);
     setView({ kind: "browsing" });
   }
@@ -82,13 +70,14 @@ export default function App() {
       voucherPublicKey: activeAccount.publicKey,
       vouchedForId: selectedAccount.userId,
     });
+    // createVouch mutated the vouchee's stored trustLevel; reload both stores.
+    setAccounts(listAccounts());
     setVouches(listVouches());
   }
 
   async function handleDelete() {
     if (!selectedAccount) return;
     const id = selectedAccount.userId;
-    // Cascade: remove vouches involving this account.
     for (const v of listVouches()) {
       if (v.voucherId === id || v.vouchedForId === id) {
         deleteVouch(v.id);
@@ -149,7 +138,6 @@ export default function App() {
           accounts={accounts}
           selectedUserId={selectedUserId}
           activeUserId={activeUserId}
-          trustLevels={trustLevels}
           onSelect={handleSelect}
           onSetActive={handleSetActive}
           onNew={() => setView({ kind: "creating" })}
@@ -158,7 +146,6 @@ export default function App() {
           {selectedAccount ? (
             <Profile
               account={selectedAccount}
-              trustLevel={trustLevels.get(selectedAccount.userId) ?? 0}
               vouchesReceived={vouches.filter((v) => v.vouchedForId === selectedAccount.userId)}
               vouchesGiven={vouches.filter((v) => v.voucherId === selectedAccount.userId)}
               accountsById={accountsById}

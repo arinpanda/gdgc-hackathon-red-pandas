@@ -1,6 +1,8 @@
 import type { Vouch, UnsignedVouch } from "../shared/types/vouch";
 import { canonicalVouchBytes } from "../shared/types/vouch";
 import { signWithIdentity, verifySignature } from "../shared/crypto/identityKey";
+import { vouchDelta } from "../shared/trust/vouchDelta";
+import { getAccount, saveAccount } from "./accountStore";
 
 const KEY = "blackout.vouches";
 
@@ -33,8 +35,11 @@ export function vouchesBy(userId: string): Vouch[] {
 
 /**
  * Create, sign, verify, and persist a new vouch from `voucher` to
- * `vouchedForId`. Throws if the voucher has no identity key, if a vouch
- * already exists between this pair, or if signature verification fails.
+ * `vouchedForId`, then bump the vouchee's stored trustLevel by the snapshot
+ * delta. Only the vouchee's account record is mutated — no graph traversal.
+ *
+ * Throws if voucher has no identity key, the pair already vouched, or
+ * signature verification fails.
  */
 export async function createVouch(args: {
   voucherId: string;
@@ -50,24 +55,36 @@ export async function createVouch(args: {
     throw new Error("This voucher has already vouched for this account");
   }
 
+  const voucher = getAccount(voucherId);
+  const vouchee = getAccount(vouchedForId);
+  if (!voucher) throw new Error(`Voucher ${voucherId} not found`);
+  if (!vouchee) throw new Error(`Vouchee ${vouchedForId} not found`);
+
   const unsigned: UnsignedVouch = {
     id: crypto.randomUUID(),
     voucherId,
     vouchedForId,
     voucherPublicKey,
+    voucherTrustAtTime: voucher.trustLevel,
     createdAt: new Date().toISOString(),
   };
 
   const payload = canonicalVouchBytes(unsigned);
   const signature = await signWithIdentity(voucherId, payload);
 
-  // Verify before persisting — sanity check that the signing path produces a
-  // signature the verification path accepts. Catches encoding bugs early.
+  // Self-verify before persisting; catches encoding bugs early.
   const ok = await verifySignature(voucherPublicKey, payload, signature);
   if (!ok) throw new Error("Signature failed self-verification");
 
   const vouch: Vouch = { ...unsigned, signature };
   write([...existing, vouch]);
+
+  // Apply the delta. Only the vouchee's record is touched.
+  saveAccount({
+    ...vouchee,
+    trustLevel: vouchee.trustLevel + vouchDelta(unsigned.voucherTrustAtTime),
+  });
+
   return vouch;
 }
 

@@ -37,20 +37,25 @@ A signed attestation from one account (the **voucher**) to another (the **vouche
 
 ```ts
 interface Vouch {
-  id: string;               // RFC 4122 v4 UUID, lowercase, hyphenated.
-  voucherId: string;        // userId of the voucher.
-  vouchedForId: string;     // userId of the vouchee. MUST NOT equal voucherId.
-  voucherPublicKey: string; // base64 raw P-256 pub key of the voucher (denormalized for offline verification).
-  createdAt: string;        // ISO 8601 UTC timestamp.
-  signature: string;        // base64 IEEE-P1363 ECDSA signature, see §2.
+  id: string;                  // RFC 4122 v4 UUID, lowercase, hyphenated.
+  voucherId: string;           // userId of the voucher.
+  vouchedForId: string;        // userId of the vouchee. MUST NOT equal voucherId.
+  voucherPublicKey: string;    // base64 raw P-256 pub key of the voucher (denormalized for offline verification).
+  voucherTrustAtTime: number;  // Snapshot of voucher.trustLevel at vouch time. Signed.
+  createdAt: string;           // ISO 8601 UTC timestamp.
+  signature: string;           // base64 IEEE-P1363 ECDSA signature, see §2.
 }
 ```
 
 **Uniqueness:** at most one vouch per (voucherId, vouchedForId) pair. The storage layer rejects duplicates. (Counter-vouches and revocations are a future feature.)
 
+**Why `voucherTrustAtTime` is signed:** the trust delta applied to the vouchee is derived from this snapshot (see §3). Because the voucher signs over it, anyone receiving the vouch later — including a peer that sees it via sync — can independently reproduce the exact trust delta the voucher attested to, without needing to know the voucher's *current* trust.
+
 **Canonical signing payload:** `canonicalVouchBytes(unsigned)` returns the UTF-8 bytes of `JSON.stringify(orderedFields)` where `orderedFields` contains every field of `Vouch` *except* `signature`, with keys sorted lexicographically and no whitespace.
 
-Mobile MUST produce byte-identical canonical output for any vouch with the same field values. The order — `createdAt`, `id`, `voucherId`, `voucherPublicKey`, `vouchedForId` — is what `Object.keys(...).sort()` produces in JS; mobile must sort the same way.
+Mobile MUST produce byte-identical canonical output for any vouch with the same field values. The order — `createdAt`, `id`, `voucherId`, `voucherPublicKey`, `voucherTrustAtTime`, `vouchedForId` — is what `Object.keys(...).sort()` produces in JS; mobile must sort the same way.
+
+Numeric fields (`voucherTrustAtTime`) are serialized via JS `JSON.stringify`'s default number formatting. Mobile JSON encoders must produce the same canonical numeric form (e.g. `2` not `2.0`, `2.5` not `2.50`) or signatures will not verify cross-platform.
 
 ### Government ID is a gate, NOT stored
 
@@ -118,31 +123,40 @@ Each `Account` has its own P-256 ECDSA keypair, used to:
 
 ---
 
-## 3. Trust math
+## 3. Trust math (decentralized, incremental)
 
-Source: `shared/trust/computeTrust.ts`
+Source: `shared/trust/vouchDelta.ts`
 
-`computeTrust(userIds, vouches)` returns a `Map<userId, trustLevel>` derived from the full vouch graph.
+Trust is **stored on each `Account`** and updated **only at vouch creation**. There is no global graph traversal, no fixed-point iteration, no cross-account dependency at compute time. This is what makes the math compatible with the decentralized vision: when account A vouches for account B in person, only A's and B's devices need to be present, and only B's stored value changes.
+
+### The math
 
 ```
-trust(u) = sum over distinct vouchers v in vouchesFor(u) of (1 + W * trust(v))
-where W = TRUST_VOUCHER_WEIGHT = 0.5
+delta = 1 + W * voucherTrustAtTime,   where W = TRUST_VOUCHER_WEIGHT = 0.5
+B.trustLevel := B.trustLevel + delta
 ```
 
-Computed by fixed-point iteration starting from `0` for everyone, repeated `TRUST_ITERATIONS = 5` times. Mobile MUST use the same constants and iteration count to reproduce identical scores from the same vouch graph.
+That's all. `voucherTrustAtTime` is the voucher's trust at the moment of vouching, snapshotted into the `Vouch` record and signed. No re-derivation from the live graph is ever needed or permitted.
 
-**Properties:**
-- An isolated account with no vouches: `0`.
-- One vouch from a fresh (trust 0) account: `1.0`.
-- Two vouches from fresh accounts: `2.0` (additive in `1 +` term).
-- A vouch from a high-trust voucher counts more (the `0.5 * trust(v)` boost).
-- **Cycles (A↔B):** produce stable but inflated values; known v0 limitation. Per-domain trust and explicit cycle damping are future work.
-- **Self-vouches:** rejected at storage; defensively ignored in computation.
-- **Duplicate vouches** (same voucher → same vouchee): rejected at storage; defensively de-duped via the distinct-vouchers set.
+### Properties
+
+- **Locality:** a vouch event mutates *only* the vouchee's stored `trustLevel`. The voucher's trust is unchanged. Nobody else's trust is touched. A peer-to-peer vouch between two devices requires no third-party recomputation.
+- **Replay-safe:** the signed `voucherTrustAtTime` lets any device that later receives the vouch (e.g. via mobile peer sync) apply the exact same delta. The same vouch never produces different deltas on different devices.
+- **Additive only:** trust can only grow from vouches. Counter-vouches (negative deltas) are a future feature.
+- **History matters, not snapshots:** if the voucher's trust grows *after* they vouched, the past vouch's delta does not retroactively grow. This is intentional — past attestations are immutable.
+- **Cycles are harmless:** A vouches for B (B += delta_A), later B vouches for A (A += delta_B). Both deltas were computed from snapshots taken at different points in time; nothing infinite-loops.
+- **Self-vouches:** rejected at the storage layer.
+- **Duplicate vouches** (same voucher → same vouchee): rejected at the storage layer.
+
+### What's explicitly forbidden
+
+- **No global recomputation.** Code MUST NOT iterate over the full vouch set to derive trust levels for everyone. The previous fixed-point `computeTrust` function has been deleted; do not reintroduce it. Mobile implementations MUST follow the same rule.
+- **No retroactive deltas.** When a voucher's trust changes, vouches they previously gave do not update.
+- **No central writer.** Any code path that writes `Account.trustLevel` must originate from a vouch event (or a future counter-vouch event). UI MUST NEVER write `trustLevel`.
 
 ### `trustLevel` on `Account`
 
-`Account.trustLevel` is a **cached** copy of the value `computeTrust` would produce for that user. v0 doesn't write back to `Account.trustLevel` (the UI reads live from `computeTrust` each render); when persistence of trust is needed (e.g. for sync), the single-writer is the trust computation pass. UI MUST NEVER write `trustLevel` directly.
+`Account.trustLevel` is the **authoritative stored value**. It starts at `0` (`INITIAL_TRUST_LEVEL`). The single writer is `createVouch` in `storage/vouchStore.ts` (and any future counter-vouch creator). All readers — UI, sync, anything — read this stored value directly.
 
 ---
 
@@ -168,8 +182,8 @@ The current web UX is a **multi-account simulator**: one device holds several ac
 1. Pick an account to **act as** (sidebar "act as" link sets `activeUserId`).
 2. Select a different account in the sidebar.
 3. On its profile, click **"Vouch as [active]"**.
-4. The app builds an `UnsignedVouch`, computes `canonicalVouchBytes(...)`, signs with the active account's private key, self-verifies, and persists.
-5. All visible `trustLevel` values recompute immediately.
+4. The app reads the voucher's current `trustLevel`, builds an `UnsignedVouch` with that value as `voucherTrustAtTime`, computes `canonicalVouchBytes(...)`, signs with the active account's private key, self-verifies, persists the vouch, and increments **only the vouchee's** stored `trustLevel` by `vouchDelta(voucherTrustAtTime)`.
+5. The vouchee's displayed `trustLevel` updates. No other account's value changes.
 
 ### Account deletion
 

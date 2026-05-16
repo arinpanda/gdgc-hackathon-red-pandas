@@ -5,7 +5,6 @@ import { fingerprint, shortUserId } from "../shared/types/account";
 
 interface Props {
   account: Account;
-  trustLevel: number;
   vouchesReceived: Vouch[];
   vouchesGiven: Vouch[];
   accountsById: Map<string, Account>;
@@ -19,7 +18,6 @@ interface Props {
 
 export function Profile({
   account,
-  trustLevel,
   vouchesReceived,
   vouchesGiven,
   accountsById,
@@ -93,7 +91,7 @@ export function Profile({
       <dl className="kv">
         <dt>Age</dt><dd>{account.age}</dd>
         <dt>User ID</dt><dd><code>{shortUserId(account.userId)}</code></dd>
-        <dt>Trust level</dt><dd><strong>{trustLevel.toFixed(2)}</strong></dd>
+        <dt>Trust level</dt><dd><strong>{account.trustLevel.toFixed(2)}</strong></dd>
         <dt>Profession</dt><dd>{professionDisplay}</dd>
         <dt>Location</dt><dd>{account.locale}</dd>
         <dt>Key</dt><dd><code>{fingerprint(account)}</code></dd>
