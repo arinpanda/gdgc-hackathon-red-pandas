@@ -42,6 +42,25 @@ The core idea: **trust is contagious, but only along chains of already-trusted p
 
 ## How It Works
 
+### Identity Anchoring: Passport & Government ID
+
+Before a vouch can mean anything, two devices need to agree they're talking about *the same person*. Names are not unique; faces age; memories drift. We anchor identity using physical credentials that survived the blackout:
+
+- **Passports** — The NFC chip in a modern e-passport stores the holder's name, date of birth, and a signed biometric (face image), all readable directly from the chip. Critically, this works **without any backend** — the chip itself is the source of truth. The phone reads the chip via NFC, captures a live face scan, and confirms the live face matches the chip's stored biometric. The result is a locally-signed identity record: "this device confirmed that this physical passport, issued to this face, was presented at this time."
+- **Any government photo ID** — Driver's license, national ID card, residence permit, military ID. Anything with a photo and issuing-authority mark is treated equivalently. The phone captures the document via camera, OCRs the fields, photographs the holder, and produces the same kind of locally-signed identity record. Less cryptographically strong than a passport NFC read, but the social proof is the same: "I verified this physical document against this face."
+- **No ID at all** — Identity can also be anchored purely by in-person vouches from already-anchored peers. Slower, but no one is excluded.
+
+**Important:** identity anchoring proves *who* you are. It does **not** grant any trust score. A freshly-anchored stranger has zero trust until peers begin vouching for them. The passport gets you onto the graph; vouches are what let you do anything on it.
+
+### BASIC Users vs Professionals
+
+Both flows use the **same** identity-anchoring step. The difference is what you *claim* afterward:
+
+- **BASIC user** — Identity-anchored, no profession claim. Trust grows from peer vouches on general character.
+- **Professional** — Identity-anchored, plus a **claimed profession** (e.g. "doctor", "lawyer", "civil engineer"). The claim starts unverified and contributes nothing to anyone's decision-making until same-domain trusted peers begin vouching for it. A self-declared "doctor" with zero medical-domain vouches is treated exactly like a BASIC user with a hopeful label.
+
+This matters because under the old system, a professional was someone with a piece of paper from an institution. Under viral trust, **a professional is someone other professionals say is one**. The claim is just a hint about which domain the vouches should accumulate in.
+
 ### Bootstrap: Web-of-Trust Seeding
 There are no anointed authorities. Trust emerges from the bottom up:
 
@@ -86,6 +105,28 @@ When you encounter a professional and need to decide whether to trust them, your
 2. **The trust path** — the shortest chain of vouches from someone *you* trust to *them*. e.g.: *"Trusted by Maria (your neighbor) → who is trusted by Dr. Chen → who vouches for this surgeon's medical competence."*
 
 The score is for speed. The path is for the moments that matter — before surgery, before signing, before voting.
+
+---
+
+## The Mobile App (iOS)
+
+The system is delivered as a **native iOS app**. iOS-only for the hackathon scope — the platform gives us the NFC, secure-enclave, and Bluetooth primitives we need without cross-platform compromises. (Android is a natural follow-up; the protocol itself is platform-agnostic.)
+
+### Why native iOS
+- **NFC for passport reads** — `CoreNFC` can read the ISO/IEC 14443 chip in modern e-passports, including the signed biometric face image. This is the cryptographic backbone of identity anchoring.
+- **Secure Enclave for keys** — Each user's signing key (used to sign their vouches) is generated in and never leaves the Secure Enclave. A vouch signed by your device cannot be forged even if the device is stolen and unlocked, provided biometrics are required to sign.
+- **Bluetooth / Multipeer for sync** — `CoreBluetooth` and `MultipeerConnectivity` let nearby devices discover each other and exchange the slice of the trust graph relevant to both, with no internet needed.
+- **Vision + AVFoundation for ID capture** — For non-passport government IDs, the camera + on-device OCR captures the document and the holder's live face for matching.
+
+### What the app does
+1. **Onboard** — Walk a new user through identity anchoring (passport NFC scan, or any-gov-ID camera flow), generate their Secure Enclave keypair, and add them to the local trust graph as an anchored-but-unvouched node.
+2. **Vouch** — In person, two users tap their phones together (or pair via Bluetooth). Each can append a signed vouch for the other, optionally tagged with a domain (e.g. "I vouch for Dr. Patel's medical competence"). Vouches are stored locally and propagate via peer sync.
+3. **Counter-vouch** — Same flow, opposite sign. Append a negative signal against someone you have evidence to discredit. Your own reputation backs the counter-vouch.
+4. **Verify** — Point the phone at someone (QR code, Bluetooth handshake, or NFC tap) to pull up their domain scores *and* the shortest trust path from you to them. Stakes-appropriate display: a number for quick decisions, the path for the big ones.
+5. **Sync** — Whenever the app encounters another device (background BLE), it exchanges the relevant slice of its local graph. Over time, the graph converges across the whole population without ever touching a server.
+
+### Offline-first by construction
+The app is built assuming the internet does not exist. Every operation — anchoring, vouching, verifying, syncing — works fully offline. If connectivity ever returns, it's a bonus channel for graph sync, never a dependency.
 
 ---
 
