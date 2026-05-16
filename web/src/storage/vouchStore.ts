@@ -1,8 +1,6 @@
-import type { Vouch, UnsignedVouch } from "../shared/types/vouch";
-import { canonicalVouchBytes } from "../shared/types/vouch";
-import type { IdentityCard } from "../shared/types/identityCard";
-import { signWithIdentity, verifySignature } from "../shared/crypto/identityKey";
-import { verifyIdentityCard } from "../shared/crypto/identityCard";
+import type { Vouch } from "../shared/types/vouch";
+import type { VouchToken } from "../shared/types/identityCard";
+import { verifyVouchToken } from "../shared/crypto/identityCard";
 import { vouchDelta } from "../shared/trust/vouchDelta";
 import type { Account } from "../shared/types/account";
 import { getAccount, saveAccount } from "./accountStore";
@@ -36,88 +34,57 @@ export function vouchesBy(userId: string): Vouch[] {
   return read().filter((v) => v.voucherId === userId);
 }
 
-/**
- * Create, sign, verify, and persist a new vouch from `voucher` to
- * `vouchedForId`, then bump the vouchee's stored trustLevel by the snapshot
- * delta. Only the vouchee's account record is mutated — no graph traversal.
- *
- * Throws if voucher has no identity key, the pair already vouched, or
- * signature verification fails.
- */
-export async function createVouch(args: {
-  voucherId: string;
-  voucherPublicKey: string;
-  vouchedForId: string;
-}): Promise<Vouch> {
-  const { voucherId, voucherPublicKey, vouchedForId } = args;
-  if (voucherId === vouchedForId) {
-    throw new Error("An account cannot vouch for itself");
-  }
-  const existing = read();
-  if (existing.some((v) => v.voucherId === voucherId && v.vouchedForId === vouchedForId)) {
-    throw new Error("This voucher has already vouched for this account");
-  }
-
-  const voucher = getAccount(voucherId);
-  const vouchee = getAccount(vouchedForId);
-  if (!voucher) throw new Error(`Voucher ${voucherId} not found`);
-  if (!vouchee) throw new Error(`Vouchee ${vouchedForId} not found`);
-
-  const unsigned: UnsignedVouch = {
-    id: crypto.randomUUID(),
-    voucherId,
-    vouchedForId,
-    voucherPublicKey,
-    voucherTrustAtTime: voucher.trustLevel,
-    createdAt: new Date().toISOString(),
-  };
-
-  const payload = canonicalVouchBytes(unsigned);
-  const signature = await signWithIdentity(voucherId, payload);
-
-  // Self-verify before persisting; catches encoding bugs early.
-  const ok = await verifySignature(voucherPublicKey, payload, signature);
-  if (!ok) throw new Error("Signature failed self-verification");
-
-  const vouch: Vouch = { ...unsigned, signature };
-  write([...existing, vouch]);
-
-  // Apply the delta. Only the vouchee's record is touched.
-  saveAccount({
-    ...vouchee,
-    trustLevel: vouchee.trustLevel + vouchDelta(unsigned.voucherTrustAtTime),
-  });
-
-  return vouch;
-}
-
 export function deleteVouch(vouchId: string): void {
   write(read().filter((v) => v.id !== vouchId));
 }
 
 /**
- * The QR-handshake entry point: the active account "scans" another party's
- * IdentityCard, the card is verified (signature + freshness), and a vouch is
- * created from active → card.userId.
+ * The QR-handshake entry point. The active account scans a VouchToken shown by
+ * another party and receives trust from them.
  *
- * On mobile this is invoked after the camera decodes a QR. On the web
- * reference, the card is pasted as JSON. Either way, the card itself carries
- * everything we need to verify.
+ * Flow: token holder shows card → active account scans it → active account is
+ * the vouchee; token holder is the voucher.
+ *
+ * The stored Vouch.signature is the token holder's signature over the token
+ * fields (excludes vouchedForId — see VouchToken docs for the security rationale).
  */
-export async function vouchFromScannedCard(
+export async function vouchFromScannedToken(
   active: Account,
-  card: IdentityCard,
+  token: VouchToken,
 ): Promise<Vouch> {
-  if (active.userId === card.userId) {
-    throw new Error("You cannot scan your own card");
+  if (token.voucherId === active.userId) {
+    throw new Error("You cannot scan your own token");
   }
-  const result = await verifyIdentityCard(card);
+
+  const result = await verifyVouchToken(token);
   if (!result.ok) {
-    throw new Error(`Card invalid: ${result.error}`);
+    throw new Error(`Token invalid: ${result.error}`);
   }
-  return createVouch({
-    voucherId: active.userId,
-    voucherPublicKey: active.publicKey,
-    vouchedForId: card.userId,
+
+  const existing = read();
+  if (existing.some((v) => v.voucherId === token.voucherId && v.vouchedForId === active.userId)) {
+    throw new Error("You have already received a vouch from this account");
+  }
+
+  const vouchee = getAccount(active.userId);
+  if (!vouchee) throw new Error("Active account not found");
+
+  const vouch: Vouch = {
+    id: crypto.randomUUID(),
+    voucherId: token.voucherId,
+    vouchedForId: active.userId,
+    voucherPublicKey: token.voucherPublicKey,
+    voucherTrustAtTime: token.voucherTrustAtTime,
+    createdAt: new Date().toISOString(),
+    signature: token.signature,
+  };
+
+  write([...existing, vouch]);
+
+  saveAccount({
+    ...vouchee,
+    trustLevel: vouchee.trustLevel + vouchDelta(token.voucherTrustAtTime),
   });
+
+  return vouch;
 }

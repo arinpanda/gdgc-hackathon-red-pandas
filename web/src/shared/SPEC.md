@@ -21,13 +21,18 @@ interface Account {
   userId: string;       // RFC 4122 v4 UUID, lowercase, hyphenated. Internal — not user-facing as a handle.
   name: string;         // Display name. Trimmed, non-empty.
   age: number;          // Integer, 13–120.
-  trustLevel: number;   // Single score. Starts at 0 (INITIAL_TRUST_LEVEL); see §3 for recomputation.
+  trustLevel: number;   // 0 (INITIAL_TRUST_LEVEL) for normals, MAX_TRUST_LEVEL (1000) for superusers.
   profession: string;   // Free-text. Empty string = BASIC user (no profession claimed).
   locale: string;       // Free-text location (e.g. "London, UK"). Non-empty.
   publicKey: string;    // base64 of raw P-256 public-key bytes (65 bytes, uncompressed SEC1).
   createdAt: string;    // ISO 8601 UTC timestamp.
+  isSuperuser: boolean; // Set once at creation; immutable. Superusers can found organizations.
 }
 ```
+
+### Superusers
+
+A `Superuser` is a regular `Account` with `isSuperuser: true` and starting trust set to `MAX_TRUST_LEVEL`. In the simulator anyone can self-declare superuser at onboarding; in production this would obviously need stronger gating. Beyond the starting trust level, the only operational capability superusers have is the right to **found organizations** (§N below). Mobile MUST honor the `isSuperuser` flag identically: enforce founder-only `createOrganization`, start trust at `MAX_TRUST_LEVEL`.
 
 ### `Vouch`
 
@@ -81,6 +86,97 @@ interface IdentityCard {
 **Canonical signing payload:** `canonicalIdentityCardBytes(unsigned)` — sorted keys, no whitespace, UTF-8. Sort order: `issuedAt`, `name`, `nonce`, `publicKey`, `userId`.
 
 **The handshake → vouch flow:** when account A scans account B's card while acting as A, the storage layer's `vouchFromScannedCard(active=A, card)` verifies the card and then calls `createVouch` with the right ids. So scanning a card *is* vouching — the QR handshake replaces the need for a separate "select target → click vouch" step.
+
+### `Organization`
+
+Source: `shared/types/organization.ts`, `shared/crypto/organization.ts`
+
+A named entity founded by a superuser. Membership is gated by signed invites (next section).
+
+```ts
+interface Organization {
+  id: string;               // UUID v4.
+  name: string;             // Trimmed, non-empty.
+  founderId: string;        // userId of the founding superuser.
+  founderPublicKey: string; // Denormalized so receivers can verify the signature offline.
+  createdAt: string;        // ISO 8601 UTC.
+  signature: string;        // ECDSA over canonicalize(everything-except-signature) by founder.
+}
+```
+
+`createOrganization(founder, name)` refuses if `founder.isSuperuser !== true`. Mobile MUST enforce the same.
+
+Storage: `blackout.organizations` (`Organization[]`). Mobile maps to its platform store.
+
+### `OrgInvite` (signed handshake payload with chain)
+
+Source: `shared/types/orgInvite.ts`, `shared/crypto/orgInvite.ts`
+
+A signed authorization to join an organization, carrying the full chain of prior invites back to the founder. On mobile, encoded as a QR; on web, exchanged as JSON.
+
+```ts
+interface OrgInvite {
+  id: string;
+  orgId: string;            // Must match the outermost org.id throughout the chain.
+  inviterPublicKey: string;
+  depth: number;            // >= 1. See depth rule below.
+  nonce: string;            // Fresh per issuance.
+  issuedAt: string;
+  parent: OrgInvite | null; // Recursive chain. null only at the root (founder).
+  signature: string;        // ECDSA by inviterPublicKey over canonicalize(unsignedFields).
+  org?: Organization;       // PRESENT ONLY on the outermost (top-level) invite; absent in chain elements.
+}
+
+// What gets signed (parent is bound by id only — its full body has its own signature):
+interface UnsignedOrgInvite {
+  id; orgId; inviterPublicKey; depth; nonce; issuedAt;
+  parentInviteId: string | null;
+}
+```
+
+**Depth rule.** A recipient of a depth-N invite may re-issue invites at depths `1 .. N-1`. depth=1 is a leaf: recipient joins but cannot invite further.
+
+**Founder issuance.** When the founder issues their first invite, `parent` is `null` and the depth is unbounded (founder has effective `joinedAtDepth = Number.MAX_SAFE_INTEGER`, exposed as the `FOUNDER_DEPTH` sentinel in the `Membership` record).
+
+**Chain verification (`verifyOrgInviteChain`).** All of:
+1. Outer invite carries `org`; org signature verifies against `founderPublicKey`.
+2. Top-level invite is within `ORG_INVITE_TTL_SECONDS` (= 120s). Chain elements are historical — no freshness check on them.
+3. Every invite in the chain has `depth >= 1` and `orgId === org.id`.
+4. Every invite's signature verifies against its own `inviterPublicKey`.
+5. For each non-root invite: `depth < parent.depth`.
+6. Root invite (where `parent === null`) has `inviterPublicKey === org.founderPublicKey`.
+
+Failure surfaces a specific error: `bad-shape | missing-org | org-id-mismatch | org-signature-invalid | expired | future-dated | bad-signature | depth-rule-violated | root-not-founder | depth-zero-or-negative`.
+
+**Known limitation (v0).** The chain proves the inviter's *cryptographic* authority, but not exclusive possession of the parent invite. Anyone who obtains a parent invite QR within its freshness window can issue children from it. In the in-person QR flow this is mitigated by the holder showing the QR briefly to one specific scanner; for stronger replay-resistance a future revision could bind each invite to the invitee's publicKey via a two-message handshake.
+
+### `Membership` (local-only)
+
+Source: `shared/types/orgInvite.ts`
+
+```ts
+interface Membership {
+  orgId: string;
+  memberId: string;
+  joinedAtDepth: number;          // Invite depth at accept time; FOUNDER_DEPTH for founders.
+  acceptedAt: string;
+  inviteChain: OrgInvite | null;  // The invite that granted membership (chain preserved). null for founders.
+}
+```
+
+Storage: `blackout.memberships` (`Membership[]`). This record is **never transmitted** — it is the device's local record of org affiliation. When the member re-issues invites, the stored `inviteChain` becomes the new invite's `parent`, growing the chain by one.
+
+Mobile MUST persist the full `inviteChain` on accept, not just the surface invite — otherwise the member can't prove the chain when re-inviting.
+
+### Storage layout (extended)
+
+| Key                       | Shape           |
+|---------------------------|-----------------|
+| `blackout.accounts`       | `Account[]`     |
+| `blackout.activeUserId`   | `string` or absent |
+| `blackout.vouches`        | `Vouch[]`       |
+| `blackout.organizations`  | `Organization[]` |
+| `blackout.memberships`    | `Membership[]`  |
 
 ### Government ID is a gate, NOT stored
 
@@ -227,6 +323,13 @@ The web simulator has all accounts on one device, so when A scans B's card the s
 
 Deleting an account MUST cascade: remove the account from `blackout.accounts`, delete its keypair via `destroyIdentity(userId)`, and remove every vouch where `voucherId === userId` OR `vouchedForId === userId`. Failing to cascade leaves orphan vouches that point at missing keys.
 
+### Organization flows (QR handshake, chain-verified)
+
+1. **Found.** A superuser opens "Create org", names it, and submits. `foundOrganization` builds a signed `Organization` and a founder `Membership` (joinedAtDepth = `FOUNDER_DEPTH`).
+2. **Show invite.** A member opens "Show invite", picks an org they belong to and a depth in `1 .. min(10, joinedAtDepth - 1)` (10 is a UI cap, not a protocol cap). The app generates an `OrgInvite` with the member's stored `inviteChain` as its `parent` (null for founders), signed with the member's identity key. Each "Show" regenerates a fresh nonce + timestamp.
+3. **Scan invite.** Another account opens "Scan invite" while acting as themselves, pastes the invite JSON. `verifyOrgInviteChain` walks every level. On success, a `Membership` is created locally with `joinedAtDepth = invite.depth` and the full invite chain stored as `inviteChain`.
+4. **Cascade re-invite.** The new member can now open "Show invite" and issue invites at any depth `1 .. joinedAtDepth - 1`. Their issued invites carry their own `inviteChain` as parent, growing the chain by one each hop.
+
 ### Future flows (not yet implemented; placeholders)
 
 - ID verification (camera + OCR for driver's licence; passport NFC chip read)
@@ -236,6 +339,7 @@ Deleting an account MUST cascade: remove the account from `blackout.accounts`, d
 - Trust path display ("trusted by Maria → who is trusted by Dr Chen → who vouches for this surgeon")
 - Peer trust handshake (signed challenge-response between two identity keys)
 - Peer sync over local transport (BLE / Wi-Fi Direct / MultipeerConnectivity)
+- Invite-to-payee binding (two-message handshake) to close the v0 invite replay window
 
 ---
 

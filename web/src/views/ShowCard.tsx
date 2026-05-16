@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import type { Account } from "../shared/types/account";
-import type { IdentityCard } from "../shared/types/identityCard";
+import type { VouchToken } from "../shared/types/identityCard";
 import { CARD_TTL_SECONDS } from "../shared/types/identityCard";
-import { createIdentityCard } from "../shared/crypto/identityCard";
+import { createVouchToken } from "../shared/crypto/identityCard";
 
 interface Props {
   account: Account;
@@ -10,15 +10,15 @@ interface Props {
 }
 
 export function ShowCard({ account, onClose }: Props) {
-  const [card, setCard] = useState<IdentityCard | null>(null);
+  const [token, setToken] = useState<VouchToken | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [secondsRemaining, setSecondsRemaining] = useState(CARD_TTL_SECONDS);
 
   async function regenerate() {
     setError(null);
     try {
-      const next = await createIdentityCard(account);
-      setCard(next);
+      const next = await createVouchToken(account);
+      setToken(next);
       setSecondsRemaining(CARD_TTL_SECONDS);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -31,14 +31,14 @@ export function ShowCard({ account, onClose }: Props) {
   }, [account.userId]);
 
   useEffect(() => {
-    if (!card) return;
+    if (!token) return;
     const t = setInterval(() => {
       setSecondsRemaining((s) => Math.max(0, s - 1));
     }, 1000);
     return () => clearInterval(t);
-  }, [card]);
+  }, [token]);
 
-  const json = card ? JSON.stringify(card, null, 2) : "";
+  const json = token ? JSON.stringify(token, null, 2) : "";
 
   return (
     <div className="modal">
@@ -48,8 +48,8 @@ export function ShowCard({ account, onClose }: Props) {
           <button type="button" className="link" onClick={onClose}>close</button>
         </header>
         <p className="muted small">
-          On mobile this would be a QR code for someone else to scan with their camera.
-          Here it's the signed JSON payload — copy it into another account's "Scan" view to vouch.
+          Show this to someone so they can scan it and receive your trust.
+          On mobile this is a QR code; here, copy the JSON into another account's "Scan card" view.
         </p>
         <textarea readOnly value={json} rows={14} className="payload" />
         <div className="modal-footer">

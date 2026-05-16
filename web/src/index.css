@@ -297,6 +297,23 @@ fieldset.gate p { margin: 0; }
   vertical-align: middle;
 }
 
+.badge.super {
+  background: gold;
+  color: #08060d;
+}
+
+label.checkbox {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-weight: 400;
+  padding: 4px 0;
+}
+
+label.checkbox input {
+  margin-top: 3px;
+}
+
 /* ---------- main content ---------- */
 .content {
   padding: 24px 32px;

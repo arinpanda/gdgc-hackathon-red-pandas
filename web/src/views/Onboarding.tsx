@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Account, IdType } from "../shared/types/account";
-import { ID_TYPE_LABELS, INITIAL_TRUST_LEVEL } from "../shared/types/account";
+import { ID_TYPE_LABELS, INITIAL_TRUST_LEVEL, MAX_TRUST_LEVEL } from "../shared/types/account";
 import { createIdentity } from "../shared/crypto/identityKey";
 import { saveAccount } from "../storage/accountStore";
 
@@ -20,6 +20,7 @@ export function Onboarding({ onCreated, onCancel }: Props) {
   const [locale, setLocale] = useState("");
   const [idType, setIdType] = useState<IdType>("passport");
   const [idNumber, setIdNumber] = useState("");
+  const [isSuperuser, setIsSuperuser] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,11 +49,12 @@ export function Onboarding({ onCreated, onCancel }: Props) {
         userId,
         name: trimmedName,
         age: parsedAge,
-        trustLevel: INITIAL_TRUST_LEVEL,
+        trustLevel: isSuperuser ? MAX_TRUST_LEVEL : INITIAL_TRUST_LEVEL,
         profession: profession.trim(),
         locale: trimmedLocale,
         publicKey: publicKeyBase64,
         createdAt: new Date().toISOString(),
+        isSuperuser,
       };
       saveAccount(account);
       onCreated(account);
@@ -82,6 +84,15 @@ export function Onboarding({ onCreated, onCancel }: Props) {
 
         <label htmlFor="locale">Location</label>
         <input id="locale" type="text" value={locale} onChange={(e) => setLocale(e.target.value)} placeholder="e.g. London, UK" autoComplete="off" />
+
+        <label className="checkbox">
+          <input
+            type="checkbox"
+            checked={isSuperuser}
+            onChange={(e) => setIsSuperuser(e.target.checked)}
+          />
+          <span>Superuser <span className="muted small">— starts at max trust, can found organizations</span></span>
+        </label>
 
         <fieldset className="gate">
           <legend>Government ID</legend>

@@ -18,9 +18,8 @@ export interface Account {
   /** Integer years, 13–120. */
   age: number;
   /**
-   * Single trust score. Starts at 0 on account creation. Recomputed locally
-   * as vouches arrive (computation lives outside this module). Stored on the
-   * Account record so callers don't need the vouch graph just to render it.
+   * Single trust score. Starts at 0 for normal accounts, MAX_TRUST_LEVEL for
+   * superusers. Mutated only by vouch creation (see §3 of SPEC).
    */
   trustLevel: number;
   /** Free-text. Empty string means "no profession claimed" (BASIC user). */
@@ -31,9 +30,15 @@ export interface Account {
   publicKey: string;
   /** ISO 8601 UTC timestamp. */
   createdAt: string;
+  /**
+   * Superusers start with MAX_TRUST_LEVEL and can found organizations.
+   * Set once at account creation; immutable thereafter.
+   */
+  isSuperuser: boolean;
 }
 
 export const INITIAL_TRUST_LEVEL = 0;
+export const MAX_TRUST_LEVEL = 1000;
 
 export function fingerprint(account: Account): string {
   const hex = base64ToHex(account.publicKey);
