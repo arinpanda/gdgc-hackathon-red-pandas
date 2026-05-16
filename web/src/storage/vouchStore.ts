@@ -1,7 +1,10 @@
 import type { Vouch, UnsignedVouch } from "../shared/types/vouch";
 import { canonicalVouchBytes } from "../shared/types/vouch";
+import type { IdentityCard } from "../shared/types/identityCard";
 import { signWithIdentity, verifySignature } from "../shared/crypto/identityKey";
+import { verifyIdentityCard } from "../shared/crypto/identityCard";
 import { vouchDelta } from "../shared/trust/vouchDelta";
+import type { Account } from "../shared/types/account";
 import { getAccount, saveAccount } from "./accountStore";
 
 const KEY = "blackout.vouches";
@@ -90,4 +93,31 @@ export async function createVouch(args: {
 
 export function deleteVouch(vouchId: string): void {
   write(read().filter((v) => v.id !== vouchId));
+}
+
+/**
+ * The QR-handshake entry point: the active account "scans" another party's
+ * IdentityCard, the card is verified (signature + freshness), and a vouch is
+ * created from active → card.userId.
+ *
+ * On mobile this is invoked after the camera decodes a QR. On the web
+ * reference, the card is pasted as JSON. Either way, the card itself carries
+ * everything we need to verify.
+ */
+export async function vouchFromScannedCard(
+  active: Account,
+  card: IdentityCard,
+): Promise<Vouch> {
+  if (active.userId === card.userId) {
+    throw new Error("You cannot scan your own card");
+  }
+  const result = await verifyIdentityCard(card);
+  if (!result.ok) {
+    throw new Error(`Card invalid: ${result.error}`);
+  }
+  return createVouch({
+    voucherId: active.userId,
+    voucherPublicKey: active.publicKey,
+    vouchedForId: card.userId,
+  });
 }

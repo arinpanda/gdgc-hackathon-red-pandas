@@ -8,10 +8,7 @@ interface Props {
   vouchesReceived: Vouch[];
   vouchesGiven: Vouch[];
   accountsById: Map<string, Account>;
-  activeAccount: Account | null;
-  /** True iff a vouch already exists from active → this profile. */
-  alreadyVouched: boolean;
-  onVouch: () => Promise<void>;
+  isActive: boolean;
   onSetActive: () => void;
   onDelete: () => Promise<void>;
 }
@@ -21,31 +18,16 @@ export function Profile({
   vouchesReceived,
   vouchesGiven,
   accountsById,
-  activeAccount,
-  alreadyVouched,
-  onVouch,
+  isActive,
   onSetActive,
   onDelete,
 }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const created = new Date(account.createdAt).toLocaleString();
-  const isActive = activeAccount?.userId === account.userId;
   const professionDisplay = account.profession.trim() === ""
     ? <span className="muted">BASIC user (no profession claimed)</span>
     : account.profession;
-
-  async function handleVouch() {
-    setError(null);
-    setBusy(true);
-    try {
-      await onVouch();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
 
   async function handleDelete() {
     if (!confirm(`Delete "${account.name}" and its identity key? Vouches involving this account will also be removed.`)) return;
@@ -70,16 +52,6 @@ export function Profile({
           {!isActive && (
             <button type="button" className="secondary" onClick={onSetActive} disabled={busy}>
               Act as {account.name}
-            </button>
-          )}
-          {activeAccount && !isActive && (
-            <button
-              type="button"
-              onClick={handleVouch}
-              disabled={busy || alreadyVouched}
-              title={alreadyVouched ? `${activeAccount.name} has already vouched for ${account.name}` : undefined}
-            >
-              {alreadyVouched ? `${activeAccount.name} already vouched` : `Vouch as ${activeAccount.name}`}
             </button>
           )}
           <button type="button" className="secondary danger" onClick={handleDelete} disabled={busy}>

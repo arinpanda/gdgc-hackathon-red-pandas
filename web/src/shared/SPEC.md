@@ -57,6 +57,31 @@ Mobile MUST produce byte-identical canonical output for any vouch with the same 
 
 Numeric fields (`voucherTrustAtTime`) are serialized via JS `JSON.stringify`'s default number formatting. Mobile JSON encoders must produce the same canonical numeric form (e.g. `2` not `2.0`, `2.5` not `2.50`) or signatures will not verify cross-platform.
 
+### `IdentityCard` (the QR handshake payload)
+
+Source: `shared/types/identityCard.ts`, `shared/crypto/identityCard.ts`
+
+A short-lived signed payload the holder hands to another party in person. **On mobile this is encoded into a QR code** that the holder shows on screen and the other party scans with their camera. The web reference exchanges it as JSON text (camera UX is mobile-only).
+
+```ts
+interface IdentityCard {
+  userId: string;     // Holder's userId.
+  name: string;       // Holder's display name (so the scanner can show it without lookup).
+  publicKey: string;  // Holder's base64 raw P-256 public key.
+  nonce: string;      // Fresh base64 random (16 bytes) generated per issuance.
+  issuedAt: string;   // ISO 8601 UTC timestamp of issuance.
+  signature: string;  // base64 IEEE-P1363 ECDSA over canonicalize(everything-except-signature).
+}
+```
+
+**Freshness:** the verifier rejects cards older than `CARD_TTL_SECONDS = 120`. A `CLOCK_SKEW_SECONDS = 30` allowance lets slightly future-dated cards through (issuer's clock might be a few seconds ahead). A screenshot of an old card is therefore useless after two minutes.
+
+**Why nonce + issuedAt?** This is a one-way handshake (no challenge from the scanner). The nonce makes every issuance unique; the timestamp bounds replay; together they prove the holder was actively producing cards in the recent past.
+
+**Canonical signing payload:** `canonicalIdentityCardBytes(unsigned)` — sorted keys, no whitespace, UTF-8. Sort order: `issuedAt`, `name`, `nonce`, `publicKey`, `userId`.
+
+**The handshake → vouch flow:** when account A scans account B's card while acting as A, the storage layer's `vouchFromScannedCard(active=A, card)` verifies the card and then calls `createVouch` with the right ids. So scanning a card *is* vouching — the QR handshake replaces the need for a separate "select target → click vouch" step.
+
 ### Government ID is a gate, NOT stored
 
 To create an account the user MUST present a government ID (`passport` or `drivers_license`). The web reference collects an ID type and ID number at onboarding, validates they're non-empty, then **discards them** — they never enter the `Account` JSON, never touch IndexedDB.
@@ -177,13 +202,26 @@ The current web UX is a **multi-account simulator**: one device holds several ac
 3. **On submit:** generate UUID v4 `userId` → generate identity keypair (§2) → construct `Account` (`trustLevel: 0`) → persist → set as active if no active account exists → discard ID fields → transition to browse view.
 4. **Browse view:** sidebar lists all accounts (with live trust); main panel shows the selected account's profile.
 
-### Vouching flow
+### Vouching flow (QR handshake)
 
-1. Pick an account to **act as** (sidebar "act as" link sets `activeUserId`).
-2. Select a different account in the sidebar.
-3. On its profile, click **"Vouch as [active]"**.
-4. The app reads the voucher's current `trustLevel`, builds an `UnsignedVouch` with that value as `voucherTrustAtTime`, computes `canonicalVouchBytes(...)`, signs with the active account's private key, self-verifies, persists the vouch, and increments **only the vouchee's** stored `trustLevel` by `vouchDelta(voucherTrustAtTime)`.
-5. The vouchee's displayed `trustLevel` updates. No other account's value changes.
+There is no "pick a target then click vouch" UI. Vouching happens through the QR handshake; scanning a card *is* vouching.
+
+1. **Pick an account to act as** in the sidebar ("act as" link sets `activeUserId`).
+2. **Holder side:** that account opens "Show my card". The app generates a fresh `IdentityCard` (random nonce, current timestamp, signed with the holder's private key). On mobile this is rendered as a QR code; on web it's the JSON. Cards expire after `CARD_TTL_SECONDS`.
+3. **Scanner side:** another account, also acting as itself, opens "Scan card". On mobile the camera decodes a QR; on web the JSON is pasted.
+4. **Verification:** `verifyIdentityCard(card)` checks shape, signature against the embedded `publicKey`, and freshness.
+5. **Vouch:** if the card verifies, `vouchFromScannedCard(active, card)` builds an `UnsignedVouch` with the active account's current `trustLevel` as `voucherTrustAtTime`, signs it, self-verifies, persists, and increments **only the vouchee's** stored `trustLevel` by `vouchDelta(voucherTrustAtTime)`.
+6. The vouchee's displayed `trustLevel` updates. No other account's value changes.
+
+#### Web vs mobile: where camera/QR live
+
+- The web reference implements the **payload format** (`IdentityCard`), the **issuer logic** (`createIdentityCard`), and the **verifier logic** (`verifyIdentityCard`, `vouchFromScannedCard`). These are platform-portable contracts mobile must reimplement identically.
+- The web does **not** render QR pixels and does **not** scan with a camera. It exchanges the signed JSON via copy/paste so the protocol is testable end-to-end without a camera.
+- Mobile (iOS/Android) wraps the same payload in a QR (e.g. via `CIFilter.qrCodeGenerator()` on iOS, `BarcodeEncoder` on Android) and uses the platform camera + barcode detection on the scanner side. The QR is purely transport — the JSON inside is what's signed and verified.
+
+#### Note: simulator vs real peer-to-peer
+
+The web simulator has all accounts on one device, so when A scans B's card the storage layer can immediately bump B's `trustLevel`. On real mobile, A's vouch travels to B's device via peer sync (BLE etc.), and B's device applies the delta when the vouch arrives. Either way, the **delta is computed from the signed `voucherTrustAtTime` snapshot**, so the math is identical regardless of who applies it where.
 
 ### Account deletion
 

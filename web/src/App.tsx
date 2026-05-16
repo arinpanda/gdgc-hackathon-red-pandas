@@ -8,12 +8,15 @@ import {
   deleteAccount,
   clearAllAccounts,
 } from "./storage/accountStore";
-import { listVouches, createVouch, deleteVouch } from "./storage/vouchStore";
+import { listVouches, deleteVouch } from "./storage/vouchStore";
 import { Onboarding } from "./views/Onboarding";
 import { AccountList } from "./views/AccountList";
 import { Profile } from "./views/Profile";
+import { ShowCard } from "./views/ShowCard";
+import { ScanCard } from "./views/ScanCard";
 
 type View = { kind: "creating" } | { kind: "browsing" };
+type Modal = null | { kind: "show" } | { kind: "scan" };
 
 export default function App() {
   const [accounts, setAccounts] = useState<Account[]>(() => listAccounts());
@@ -26,6 +29,7 @@ export default function App() {
   const [view, setView] = useState<View>(() =>
     listAccounts().length === 0 ? { kind: "creating" } : { kind: "browsing" }
   );
+  const [modal, setModal] = useState<Modal>(null);
 
   const accountsById = useMemo(() => {
     const m = new Map<string, Account>();
@@ -63,18 +67,6 @@ export default function App() {
     setActive(userId);
   }
 
-  async function handleVouch() {
-    if (!activeAccount || !selectedAccount) return;
-    await createVouch({
-      voucherId: activeAccount.userId,
-      voucherPublicKey: activeAccount.publicKey,
-      vouchedForId: selectedAccount.userId,
-    });
-    // createVouch mutated the vouchee's stored trustLevel; reload both stores.
-    setAccounts(listAccounts());
-    setVouches(listVouches());
-  }
-
   async function handleDelete() {
     if (!selectedAccount) return;
     const id = selectedAccount.userId;
@@ -103,6 +95,12 @@ export default function App() {
     setView({ kind: "creating" });
   }
 
+  function handleVouched() {
+    // ScanCard already persisted; just refresh local state.
+    setAccounts(listAccounts());
+    setVouches(listVouches());
+  }
+
   if (view.kind === "creating") {
     return (
       <Onboarding
@@ -112,14 +110,6 @@ export default function App() {
     );
   }
 
-  const alreadyVouched = !!(
-    activeAccount &&
-    selectedAccount &&
-    vouches.some(
-      (v) => v.voucherId === activeAccount.userId && v.vouchedForId === selectedAccount.userId,
-    )
-  );
-
   return (
     <div className="layout">
       <header className="topbar">
@@ -128,6 +118,23 @@ export default function App() {
           <span className="muted small">
             acting as {activeAccount?.name ?? <em>none</em>}
           </span>
+          <button
+            type="button"
+            className="secondary"
+            onClick={() => setModal({ kind: "show" })}
+            disabled={!activeAccount}
+            title={activeAccount ? undefined : "Set an active account first"}
+          >
+            Show my card
+          </button>
+          <button
+            type="button"
+            onClick={() => setModal({ kind: "scan" })}
+            disabled={!activeAccount}
+            title={activeAccount ? undefined : "Set an active account first"}
+          >
+            Scan card
+          </button>
           <button type="button" className="secondary" onClick={handleClearAll}>
             Wipe all
           </button>
@@ -149,9 +156,7 @@ export default function App() {
               vouchesReceived={vouches.filter((v) => v.vouchedForId === selectedAccount.userId)}
               vouchesGiven={vouches.filter((v) => v.voucherId === selectedAccount.userId)}
               accountsById={accountsById}
-              activeAccount={activeAccount}
-              alreadyVouched={alreadyVouched}
-              onVouch={handleVouch}
+              isActive={activeAccount?.userId === selectedAccount.userId}
               onSetActive={() => handleSetActive(selectedAccount.userId)}
               onDelete={handleDelete}
             />
@@ -160,6 +165,17 @@ export default function App() {
           )}
         </main>
       </div>
+
+      {modal?.kind === "show" && activeAccount && (
+        <ShowCard account={activeAccount} onClose={() => setModal(null)} />
+      )}
+      {modal?.kind === "scan" && activeAccount && (
+        <ScanCard
+          active={activeAccount}
+          onVouched={handleVouched}
+          onClose={() => setModal(null)}
+        />
+      )}
     </div>
   );
 }
