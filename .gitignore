@@ -3,6 +3,3 @@ web/node_modules
 web/dist
 web/.vite
 
-# macOS
-.DS_Store
-ios/
