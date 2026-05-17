@@ -1,4 +1,4 @@
-name: Blackout
+name: TrustGrid
 options:
   bundleIdPrefix: com.gdgcuda
   deploymentTarget:
@@ -6,7 +6,7 @@ options:
   createIntermediateGroups: true
 
 targets:
-  Blackout:
+  TrustGrid:
     type: application
     platform: iOS
     deploymentTarget: "17.0"
@@ -15,7 +15,7 @@ targets:
     info:
       path: Blackout/Info.plist
       properties:
-        CFBundleDisplayName: Blackout
+        CFBundleDisplayName: TrustGrid
         NSCameraUsageDescription: "Camera is used to scan QR codes during in-person trust handshakes."
         NSPhotoLibraryUsageDescription: "Select a profile photo for your identity card."
         UILaunchScreen: {}

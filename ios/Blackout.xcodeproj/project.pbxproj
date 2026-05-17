@@ -242,6 +242,7 @@
 				DEVELOPMENT_TEAM = 8CZ7345H43;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = Blackout/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TrustGrid;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -318,6 +319,7 @@
 				DEVELOPMENT_TEAM = 8CZ7345H43;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				INFOPLIST_FILE = Blackout/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = TrustGrid;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",

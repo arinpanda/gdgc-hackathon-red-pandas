@@ -58,7 +58,7 @@ struct OnboardingView: View {
             Image(systemName: "lock.shield.fill")
                 .font(.system(size: 72))
                 .foregroundStyle(.white)
-            Text("Blackout")
+            Text("TrustGrid")
                 .font(.system(.largeTitle, design: .rounded).bold())
                 .foregroundStyle(.white)
             Text("Viral Trust Network")
@@ -250,7 +250,7 @@ struct OnboardingView: View {
     private var termsRow: some View {
         HStack(alignment: .top, spacing: 12) {
             Toggle("", isOn: $agreedToTerms).labelsHidden().tint(.black)
-            Text("I acknowledge the Blackout **Terms of Use** and agree to the identity attestation requirements for network access.")
+            Text("I acknowledge the TrustGrid **Terms of Use** and agree to the identity attestation requirements for network access.")
                 .font(.subheadline)
                 .foregroundStyle(Color.appOnSurfaceVariant)
         }
