@@ -1,0 +1,29 @@
+name: Blackout
+options:
+  bundleIdPrefix: com.gdgcuda
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+
+targets:
+  Blackout:
+    type: application
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: Blackout
+    info:
+      path: Blackout/Info.plist
+      properties:
+        CFBundleDisplayName: Blackout
+        NSCameraUsageDescription: "Camera is used to scan QR codes during in-person trust handshakes."
+        NSPhotoLibraryUsageDescription: "Select a profile photo for your identity card."
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.gdgcuda.blackout
+        SWIFT_VERSION: "5.0"
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
